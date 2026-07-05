@@ -22,4 +22,4 @@
     "postinstall": "npx playwright install chromium"
   }
 }
-}
+
