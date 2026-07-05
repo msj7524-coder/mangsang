@@ -211,6 +211,132 @@ async function loadBoard() {
   const b = await (await fetch('/api/board')).json();
   const body = document.getElementById('boardBody');
   if (!b.length) { body.innerHTML = '<tr><td colspan="4">현재 예약 가능한 항목이 없습니다.</td></tr>'; return; }
+<script>
+const ALL = "ALL";
+let cfg = { facilities: [], roomTypes: [] };
+let selectedFacilities = new Set();
+let roomTypeIsAll = true;
+let selectedRoomTypes = new Set();
+let channels = { email: false, kakao: true };
+let kakaoConnected = false;
+
+// 안전한 Fetch 함수 (에러 시 스크립트가 멈추지 않도록 보호)
+async function fetchSafe(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    throw new Error(`JSON 파싱 오류 (서버가 응답을 거부했을 수 있습니다)`);
+  }
+}
+
+async function loadConfig() {
+  cfg = await fetchSafe('/api/config');
+  cfg.facilities = cfg.facilities || [];
+  cfg.roomTypes = cfg.roomTypes || [];
+  
+  const fWrap = document.getElementById('facilityChips');
+  fWrap.innerHTML = '';
+  cfg.facilities.forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'chip';
+    el.textContent = f.name;
+    el.dataset.code = f.code;
+    el.onclick = () => { toggleFacility(f.code); render(); };
+    fWrap.appendChild(el);
+  });
+
+  const rWrap = document.getElementById('roomTypeChips');
+  rWrap.innerHTML = '';
+  const allChip = document.createElement('div');
+  allChip.className = 'chip';
+  allChip.textContent = '전체 포함';
+  allChip.dataset.code = ALL;
+  allChip.onclick = () => { roomTypeIsAll = true; selectedRoomTypes.clear(); render(); };
+  rWrap.appendChild(allChip);
+
+  cfg.roomTypes.forEach(rt => {
+    const el = document.createElement('div');
+    el.className = 'chip';
+    el.textContent = rt.name;
+    el.dataset.code = rt.code;
+    el.onclick = () => { roomTypeIsAll = false; toggleSet(selectedRoomTypes, rt.code); render(); };
+    rWrap.appendChild(el);
+  });
+}
+
+function toggleFacility(code) { toggleSet(selectedFacilities, code); }
+function toggleSet(set, code) { set.has(code) ? set.delete(code) : set.add(code); }
+
+function render() {
+  document.querySelectorAll('#facilityChips .chip').forEach(el => {
+    el.classList.toggle('active', selectedFacilities.has(el.dataset.code));
+  });
+  document.querySelectorAll('#roomTypeChips .chip').forEach(el => {
+    if (el.dataset.code === ALL) el.classList.toggle('active', roomTypeIsAll);
+    else el.classList.toggle('active', !roomTypeIsAll && selectedRoomTypes.has(el.dataset.code));
+  });
+  document.querySelectorAll('#channelChips .chip').forEach(el => {
+    el.classList.toggle('active', !!channels[el.dataset.channel]);
+  });
+}
+
+async function loadSettings() {
+  const s = await fetchSafe('/api/settings');
+  document.getElementById('startDate').value = s.startDate || '';
+  document.getElementById('endDate').value = s.endDate || '';
+  document.getElementById('email').value = s.email || '';
+  document.getElementById('activeToggle').checked = !!s.active;
+  channels = s.channels || { email: false, kakao: true };
+  
+  const defaultFacilities = (cfg.facilities || []).map(f => f.code);
+  selectedFacilities = new Set(s.facilities && s.facilities.length ? s.facilities : defaultFacilities);
+  
+  if (s.roomTypes === ALL || !s.roomTypes) {
+    roomTypeIsAll = true; selectedRoomTypes = new Set();
+  } else {
+    roomTypeIsAll = false; selectedRoomTypes = new Set(s.roomTypes);
+  }
+  render();
+}
+
+async function loadKakaoStatus() {
+  const s = await fetchSafe('/api/kakao/status');
+  kakaoConnected = s.connected;
+  const box = document.getElementById('kakaoStatusBox');
+  if (kakaoConnected) {
+    box.innerHTML = '✅ 카카오톡 연동됨';
+  } else {
+    box.innerHTML = '⚠️ 카카오톡 미연동 · <a href="/auth/kakao">지금 연동하기</a>';
+  }
+}
+
+document.getElementById('channelChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const ch = chip.dataset.channel;
+  channels[ch] = !channels[ch];
+  render();
+});
+
+async function loadHistory() {
+  const h = await fetchSafe('/api/history');
+  const body = document.getElementById('historyBody');
+  if (!h || !h.length) { body.innerHTML = '<tr><td colspan="4">아직 이력이 없습니다.</td></tr>'; return; }
+  body.innerHTML = h.map(entry => {
+    const t = new Date(entry.time).toLocaleString('ko-KR');
+    const isHit = entry.status === '취소 발생';
+    const detail = (entry.items || []).map(i => `${i.facilityName} ${i.roomTypeName} ${i.date}`).join(', ') || '-';
+    return `<tr><td>${t}</td><td>${entry.type}</td><td class="${isHit ? 'status-ok' : 'status-none'}">${entry.status}</td><td>${detail}</td></tr>`;
+  }).join('');
+}
+
+async function loadBoard() {
+  const b = await fetchSafe('/api/board');
+  const body = document.getElementById('boardBody');
+  if (!b || !b.length) { body.innerHTML = '<tr><td colspan="4">현재 예약 가능한 항목이 없습니다.</td></tr>'; return; }
   const nightsLabel = { 1: '1박2일', 2: '2박3일', 3: '3박4일' };
   body.innerHTML = b.map(item => {
     const nights = item.nights.map(n => nightsLabel[n]).join(', ');
@@ -228,34 +354,53 @@ document.getElementById('saveBtn').onclick = async () => {
     active: document.getElementById('activeToggle').checked,
     channels,
   };
-  const res = await fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
-  const msg = document.getElementById('saveMsg');
-  if (res.ok) { msg.style.color = 'var(--ok)'; msg.textContent = '저장됨 ✓'; setTimeout(()=>msg.textContent='',2000); }
-  else { const e = await res.json(); msg.style.color='var(--warn)'; msg.textContent = e.error || '오류'; }
+  try {
+    const res = await fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    const msg = document.getElementById('saveMsg');
+    if (res.ok) { msg.style.color = 'var(--ok)'; msg.textContent = '저장됨 ✓'; setTimeout(()=>msg.textContent='',2000); }
+    else { const e = await res.json(); msg.style.color='var(--warn)'; msg.textContent = e.error || '오류'; }
+  } catch (e) {
+    alert("저장 중 서버 오류가 발생했습니다.");
+  }
 };
 
 document.getElementById('runNowBtn').onclick = async () => {
   const btn = document.getElementById('runNowBtn');
   btn.disabled = true; btn.textContent = '확인 중...';
   try {
-    const r = await (await fetch('/api/run-now', { method: 'POST' })).json();
+    const res = await fetch('/api/run-now', { method: 'POST' });
+    if (!res.ok) throw new Error("서버 에러");
+    const r = await res.json();
     await loadHistory();
     await loadBoard();
     alert(r.skipped ? (r.reason || '건너뜀') : `확인 완료 (신규 취소 ${r.found}건)`);
+  } catch(e) {
+    alert("감시 실행 중 오류가 발생했습니다.");
   } finally {
     btn.disabled = false; btn.textContent = '지금 1회 확인';
   }
 };
 
+// 메인 실행부: 에러를 잡아서 화면에 표기합니다.
 (async () => {
-  await loadConfig();
-  await loadSettings();
-  await loadKakaoStatus();
-  await loadHistory();
-  await loadBoard();
-  setInterval(loadHistory, 30000);
-  setInterval(loadBoard, 30000);
+  try {
+    await loadConfig();
+    await loadSettings();
+    await loadKakaoStatus();
+    await loadHistory();
+    await loadBoard();
+  } catch (e) {
+    console.error("초기 로딩 실패:", e);
+    document.getElementById('historyBody').innerHTML = `<tr><td colspan="4" class="status-ok">서버 연결 오류: ${e.message}</td></tr>`;
+    document.getElementById('boardBody').innerHTML = `<tr><td colspan="4" class="status-ok">서버 연결 오류: ${e.message}</td></tr>`;
+  }
+  
+  // 30초마다 자동 갱신
+  setInterval(async () => {
+    try { await loadHistory(); await loadBoard(); } catch (e) {}
+  }, 30000);
 })();
 </script>
+
 </body>
 </html>
