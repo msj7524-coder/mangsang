@@ -81,8 +81,8 @@ app.post("/api/run-now", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`망상 빈자리 알림 v2 서버 실행 중: http://localhost:${PORT}`));
 
-// ---- 스케줄러: 기본 30초마다 자동 감시 ----
-const INTERVAL_MIN = Number(process.env.CHECK_INTERVAL_MIN || 0.5);
+// ---- 스케줄러: 기본 5분마다 자동 감시 ----
+const INTERVAL_MIN = Number(process.env.CHECK_INTERVAL_MIN || 5);
 cron.schedule(`*/${INTERVAL_MIN} * * * *`, async () => {
   console.log(`[cron] 감시 실행 (${new Date().toLocaleString("ko-KR")})`);
   try {
