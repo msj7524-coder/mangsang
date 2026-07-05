@@ -7,12 +7,13 @@ const { FACILITIES, ROOM_TYPES, ALL_ROOM_TYPES_CODE } = require("./config");
 const STATE_FILE = path.join(__dirname, "data", "state.json");
 const SETTINGS_FILE = path.join(__dirname, "data", "settings.json");
 const HISTORY_FILE = path.join(__dirname, "data", "history.json");
+const BOARD_FILE = path.join(__dirname, "data", "board.json");
 
 const RESERVATION_URL =
   process.env.RESERVATION_URL ||
   "https://www.campingkorea.or.kr/user/reservation/BD_reservation.do";
 
-// ---------- 파일 기반 저장소 (간단한 JSON, 별도 DB 불필요) ----------
+// ---------- 파일 기반 저장소 ----------
 function readJson(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf-8"));
@@ -30,10 +31,10 @@ function getSettings() {
     email: "",
     startDate: "",
     endDate: "",
-    facilities: FACILITIES.map((f) => f.code), // 기본: 전체 시설
-    roomTypes: ALL_ROOM_TYPES_CODE, // 기본: 전체 숙소유형 포함
+    facilities: FACILITIES.map((f) => f.code),
+    roomTypes: ALL_ROOM_TYPES_CODE,
     active: false,
-    channels: { email: false, kakao: true }, // 알림 채널: 기본은 카카오
+    channels: { email: false, kakao: true },
   });
 }
 function saveSettings(settings) {
@@ -45,7 +46,13 @@ function getHistory() {
 function pushHistory(entry) {
   const h = getHistory();
   h.unshift({ time: new Date().toISOString(), ...entry });
-  writeJson(HISTORY_FILE, h.slice(0, 200)); // 최근 200건만 보관
+  writeJson(HISTORY_FILE, h.slice(0, 200));
+}
+function getBoard() {
+  return readJson(BOARD_FILE, []);
+}
+function saveBoard(board) {
+  writeJson(BOARD_FILE, board);
 }
 
 function dateRange(start, end) {
@@ -63,28 +70,16 @@ function dateRange(start, end) {
 // ⚠️ 아래 셀렉터들은 실제 화면 구조(스크린샷)를 바탕으로 만들었지만,
 // 정확한 class/속성명까지는 확인이 안 된 부분이라 배포 후
 // 한 번은 검증/조정이 필요할 수 있습니다.
-//
-// 실제 화면 구조 (사용자 확인 기반):
-// - 1단계 달력: 날짜별로 ✅(예약가능) / ❌(마감) 아이콘이 그리드로 표시됨
-// - 2단계(시설선택): 활성 날짜로 진입하면 숙소유형 버튼들(전통한옥/캐빈하우스/
-//   든바다/난바다/허허바다/자동차캠핑장/캐라반/글램핑(4인)/글램핑(2인))이 표시됨
-//
-// 전략:
-// 1) 매 주기마다 달력 화면만 불러와서(가벼움) 날짜별 ✅/❌ 상태를 비교
-// 2) "전체 포함" 설정이면 여기서 바로 취소감지 완료
-// 3) 특정 숙소유형만 원하는 경우에만, 상태가 바뀐 날짜에 한해 2단계까지
-//    들어가서 어떤 유형이 열렸는지 추가로 확인 (달력만 보는 것보다 느리므로
-//    변경 감지된 날짜에 대해서만 실행 = 효율적)
 // ---------------------------------------------------------------
 
-const CALENDAR_ICON_SELECTOR = ".calendar td, .day-cell, td.day"; // 날짜 1칸(그리드 셀)
-const AVAILABLE_ICON_HINT = /가능|possible|ok|check/i; // 아이콘 alt/class/이미지 파일명 힌트
+const CALENDAR_ICON_SELECTOR = ".calendar td, .day-cell, td.day";
+const AVAILABLE_ICON_HINT = /가능|possible|ok|check/i;
 const FULL_ICON_HINT = /마감|불가|impossible|no|close/i;
 
-const ROOM_TYPE_BUTTON_SELECTOR = ".facility-btn, .room-type-btn, .site-btn, button, a.btn"; // 2단계 숙소유형 버튼
+const ROOM_TYPE_BUTTON_SELECTOR = ".facility-btn, .room-type-btn, .site-btn, button, a.btn";
 
 function toYearMonth(dateStr) {
-  return dateStr.slice(0, 7); // "YYYY-MM"
+  return dateStr.slice(0, 7);
 }
 
 // 1단계: 달력 한 화면에서 날짜별 예약가능(✅)/마감(❌) 상태를 읽어옴
@@ -127,7 +122,7 @@ async function scrapeCalendarMonth(page, facilityCode, yearMonth) {
   return result;
 }
 
-// 2단계: 특정 날짜의 숙소유형별 활성/비활성 버튼을 읽어옴 (필요할 때만 호출)
+// 2단계: 특정 날짜의 숙소유형별 활성/비활성 버튼을 읽어옴
 async function scrapeRoomTypesForDate(page, facilityCode, dateStr) {
   const url = `${RESERVATION_URL}?facility=${facilityCode}&checkin=${dateStr}`;
   await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
@@ -152,6 +147,62 @@ function matchRoomType(roomTypeName, wanted) {
   return wantedNames.some((n) => roomTypeName.includes(n));
 }
 
+// 감시 기간 안의 모든 날짜를 체크인 후보로 보고,
+// 시설/숙소유형별로 몇 박까지 연속 예약 가능한지 계산 ("현재 예약가능" 표용)
+async function buildAvailabilityBoard(page, settings, facilities, calendarByFacilityDate) {
+  const dates = dateRange(settings.startDate, settings.endDate);
+  const roomAvailByFacilityDate = {};
+
+  for (const facility of facilities) {
+    roomAvailByFacilityDate[facility.code] = {};
+    for (const dateStr of dates) {
+      const calAvail = calendarByFacilityDate[facility.code]?.[dateStr];
+      if (!calAvail) continue; // 마감된 날짜는 건너뜀
+      try {
+        const rows = await scrapeRoomTypesForDate(page, facility.code, dateStr);
+        const map = {};
+        rows.forEach((r) => { map[r.roomTypeName] = r.available; });
+        roomAvailByFacilityDate[facility.code][dateStr] = map;
+      } catch (e) {
+        console.error(`[board] ${facility.name} ${dateStr} 조회 실패:`, e.message);
+      }
+    }
+  }
+
+  const dateIndex = new Map(dates.map((d, i) => [d, i]));
+  const results = [];
+
+  for (const facility of facilities) {
+    const facilityData = roomAvailByFacilityDate[facility.code] || {};
+    const roomNames = new Set();
+    Object.values(facilityData).forEach((map) => {
+      Object.keys(map).forEach((n) => roomNames.add(n));
+    });
+
+    for (const roomTypeName of roomNames) {
+      for (const checkIn of dates) {
+        const startIdx = dateIndex.get(checkIn);
+        const nights = [];
+        for (let n = 1; n <= 3; n++) {
+          let ok = true;
+          for (let i = 0; i < n; i++) {
+            const idx = startIdx + i;
+            const dateStr = dates[idx];
+            const map = dateStr ? facilityData[dateStr] : undefined;
+            if (!map || !map[roomTypeName]) { ok = false; break; }
+          }
+          if (ok) nights.push(n);
+          else break; // 연속이 끊기면 그 이상 숙박은 확인할 필요 없음
+        }
+        if (nights.length) {
+          results.push({ facilityName: facility.name, roomTypeName, checkIn, nights });
+        }
+      }
+    }
+  }
+  return results;
+}
+
 async function runCheckOnce() {
   const settings = getSettings();
   const channels = settings.channels || { email: false, kakao: true };
@@ -164,6 +215,7 @@ async function runCheckOnce() {
   const prevState = readJson(STATE_FILE, {});
   const nextState = {};
   const newlyAvailable = [];
+  const calendarByFacilityDate = {};
 
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -184,21 +236,21 @@ async function runCheckOnce() {
           console.error(`[monitor] ${facility.name} ${ym} 달력 조회 실패:`, e.message);
         }
       }
+      calendarByFacilityDate[facility.code] = calendarByDate;
 
       for (const dateStr of dates) {
         const key = `${facility.code}__${dateStr}`;
         const isAvailable = calendarByDate[dateStr];
-        if (isAvailable === undefined) continue; // 범위 밖이거나 조회 실패
+        if (isAvailable === undefined) continue;
 
         const wasAvailable = prevState[key]?.dateAvailable ?? false;
         nextState[key] = { dateAvailable: isAvailable, roomTypes: prevState[key]?.roomTypes || [] };
 
-        // 날짜 단위로 마감→가능 전환 감지
+        // 날짜 단위로 마감→가능 전환 감지 (실시간 감시용)
         if (isAvailable && !wasAvailable) {
           if (wantsAllRoomTypes) {
             newlyAvailable.push({ facilityName: facility.name, roomTypeName: "전체", date: dateStr });
           } else {
-            // 2) 특정 숙소유형만 원하면, 바뀐 날짜에 한해서만 2단계까지 들어가 확인
             try {
               const roomRows = await scrapeRoomTypesForDate(page, facility.code, dateStr);
               nextState[key].roomTypes = roomRows;
@@ -212,6 +264,14 @@ async function runCheckOnce() {
           }
         }
       }
+    }
+
+    // 현재 예약 가능한 시설/숙소유형/체크인/숙박기간 현황판 갱신
+    try {
+      const board = await buildAvailabilityBoard(page, settings, facilities, calendarByFacilityDate);
+      saveBoard(board);
+    } catch (e) {
+      console.error("[board] 현황판 갱신 실패:", e.message);
     }
   } finally {
     await browser.close();
@@ -247,4 +307,5 @@ module.exports = {
   getSettings,
   saveSettings,
   getHistory,
+  getBoard,
 };
