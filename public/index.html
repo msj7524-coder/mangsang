@@ -83,6 +83,15 @@
   </div>
 
   <div class="card">
+    <h2>현재 예약가능</h2>
+    <small class="hint">검색 기간 안에서 지금 "예약가능" 상태인 시설·날짜입니다. 호실 단위 상세는 표시되지 않습니다. 감시 주기마다 갱신됩니다.</small>
+    <table>
+      <thead><tr><th>날짜</th><th>시설</th></tr></thead>
+      <tbody id="boardBody"><tr><td colspan="2">불러오는 중...</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <h2>최근 이력</h2>
     <table>
       <thead><tr><th>시간</th><th>구분</th><th>상태</th><th>상세</th></tr></thead>
@@ -164,6 +173,14 @@ async function loadHistory() {
   }).join('');
 }
 
+async function loadBoard() {
+  const b = await (await fetch('/api/board')).json();
+  const body = document.getElementById('boardBody');
+  const items = b.items || [];
+  if (!items.length) { body.innerHTML = '<tr><td colspan="2">현재 예약가능한 날짜가 없습니다.</td></tr>'; return; }
+  body.innerHTML = items.map(item => `<tr><td>${item.date}</td><td>${item.facilityName}</td></tr>`).join('');
+}
+
 document.getElementById('saveBtn').onclick = async () => {
   const body = {
     email: document.getElementById('email').value.trim(),
@@ -185,6 +202,7 @@ document.getElementById('runNowBtn').onclick = async () => {
   try {
     const r = await (await fetch('/api/run-now', { method: 'POST' })).json();
     await loadHistory();
+    await loadBoard();
     alert(r.skipped ? (r.reason || '건너뜀') : `확인 완료 (신규 취소 ${r.found}건)`);
   } catch (e) {
     alert('오류: ' + e.message);
@@ -198,7 +216,9 @@ document.getElementById('runNowBtn').onclick = async () => {
   await loadSettings();
   await loadKakaoStatus();
   await loadHistory();
+  await loadBoard();
   setInterval(loadHistory, 30000);
+  setInterval(loadBoard, 30000);
 })();
 </script>
 </body>
