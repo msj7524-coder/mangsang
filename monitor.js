@@ -7,6 +7,7 @@ const { FACILITIES } = require("./config");
 const STATE_FILE = path.join(__dirname, "data", "state.json");
 const SETTINGS_FILE = path.join(__dirname, "data", "settings.json");
 const HISTORY_FILE = path.join(__dirname, "data", "history.json");
+const BOARD_FILE = path.join(__dirname, "data", "board.json");
 
 const RESERVATION_URL =
   process.env.RESERVATION_URL ||
@@ -45,6 +46,12 @@ function pushHistory(entry) {
   const h = getHistory();
   h.unshift({ time: new Date().toISOString(), ...entry });
   writeJson(HISTORY_FILE, h.slice(0, 200));
+}
+function getBoard() {
+  return readJson(BOARD_FILE, { updatedAt: null, items: [] });
+}
+function saveBoard(items) {
+  writeJson(BOARD_FILE, { updatedAt: new Date().toISOString(), items });
 }
 
 function dateRange(start, end) {
@@ -138,6 +145,7 @@ async function runCheckOnce() {
   const prevState = readJson(STATE_FILE, {});
   const nextState = {};
   const newlyAvailable = [];
+  const currentlyAvailable = [];
 
   const dates = dateRange(settings.startDate, settings.endDate);
   const yearMonths = [...new Set(dates.map(toYearMonth))].sort();
@@ -170,6 +178,9 @@ async function runCheckOnce() {
         if (isAvailable && !wasAvailable) {
           newlyAvailable.push({ facilityName: facility.name, roomTypeName: "전체", date: dateStr });
         }
+        if (isAvailable) {
+          currentlyAvailable.push({ facilityName: facility.name, date: dateStr });
+        }
       }
     }
   } catch (e) {
@@ -179,6 +190,8 @@ async function runCheckOnce() {
   await browser.close();
 
   writeJson(STATE_FILE, nextState);
+  currentlyAvailable.sort((a, b) => a.date.localeCompare(b.date) || a.facilityName.localeCompare(b.facilityName));
+  saveBoard(currentlyAvailable);
 
   if (newlyAvailable.length > 0) {
     pushHistory({ type: "취소감지", status: "취소 발생", items: newlyAvailable });
@@ -208,4 +221,5 @@ module.exports = {
   getSettings,
   saveSettings,
   getHistory,
+  getBoard,
 };
