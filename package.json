@@ -3,12 +3,10 @@
   "version": "2.0.0",
   "description": "동해시 통합예약(캠핑코리아) 취소 발생 감시 + 이메일 알림 대시보드",
   "main": "server.js",
-{
   "scripts": {
     "start": "node index.js",
     "postinstall": "npx playwright install chromium"
-  }
-}
+  },
   "dependencies": {
     "express": "^4.19.2",
     "nodemailer": "^6.9.14",
