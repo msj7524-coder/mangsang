@@ -36,22 +36,23 @@
 <body>
 <header>
   <h1>🏕️ 망상 빈자리 알림 v2</h1>
-  <p>원하는 날짜 · 숙소 유형(전체 포함)을 지정하면, 취소가 발생했을 때 이메일로 알려드려요.</p>
+  <p>체크인 날짜 · 숙박기간 · 숙소 유형(전체 포함)을 지정하면, 취소가 발생했을 때 알려드려요.</p>
 </header>
 
 <main>
   <div class="card">
     <h2>감시 조건 설정</h2>
-    <div class="grid">
-      <div>
-        <label>시작일</label>
-        <input type="date" id="startDate" />
-      </div>
-      <div>
-        <label>종료일</label>
-        <input type="date" id="endDate" />
-      </div>
+
+    <label>체크인 날짜</label>
+    <input type="date" id="checkInDate" />
+
+    <label>숙박기간</label>
+    <div class="chips" id="nightsChips">
+      <div class="chip" data-nights="1">1박 2일</div>
+      <div class="chip" data-nights="2">2박 3일</div>
+      <div class="chip" data-nights="3">3박 4일</div>
     </div>
+    <small class="hint" id="checkOutHint"></small>
 
     <label>알림 받는 방법</label>
     <div class="chips" id="channelChips">
@@ -99,6 +100,20 @@ let roomTypeIsAll = true;
 let selectedRoomTypes = new Set();
 let channels = { email: false, kakao: true };
 let kakaoConnected = false;
+let selectedNights = 1;
+
+function computeCheckout(checkIn, nights) {
+  if (!checkIn) return '';
+  const d = new Date(checkIn);
+  d.setDate(d.getDate() + nights);
+  return d.toISOString().slice(0, 10);
+}
+
+function updateCheckoutHint() {
+  const checkIn = document.getElementById('checkInDate').value;
+  const checkout = computeCheckout(checkIn, selectedNights);
+  document.getElementById('checkOutHint').textContent = checkout ? `체크아웃: ${checkout}` : '';
+}
 
 async function loadConfig() {
   cfg = await (await fetch('/api/config')).json();
@@ -146,12 +161,20 @@ function render() {
   document.querySelectorAll('#channelChips .chip').forEach(el => {
     el.classList.toggle('active', !!channels[el.dataset.channel]);
   });
+  document.querySelectorAll('#nightsChips .chip').forEach(el => {
+    el.classList.toggle('active', Number(el.dataset.nights) === selectedNights);
+  });
 }
 
 async function loadSettings() {
   const s = await (await fetch('/api/settings')).json();
-  document.getElementById('startDate').value = s.startDate || '';
-  document.getElementById('endDate').value = s.endDate || '';
+  document.getElementById('checkInDate').value = s.startDate || '';
+  if (s.startDate && s.endDate) {
+    const diffDays = Math.round((new Date(s.endDate) - new Date(s.startDate)) / (1000 * 60 * 60 * 24));
+    selectedNights = [1, 2, 3].includes(diffDays) ? diffDays : 1;
+  } else {
+    selectedNights = 1;
+  }
   document.getElementById('email').value = s.email || '';
   document.getElementById('activeToggle').checked = !!s.active;
   channels = s.channels || { email: false, kakao: true };
@@ -162,6 +185,7 @@ async function loadSettings() {
     roomTypeIsAll = false; selectedRoomTypes = new Set(s.roomTypes);
   }
   render();
+  updateCheckoutHint();
 }
 
 async function loadKakaoStatus() {
@@ -183,6 +207,16 @@ document.getElementById('channelChips').addEventListener('click', (e) => {
   render();
 });
 
+document.getElementById('nightsChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  selectedNights = Number(chip.dataset.nights);
+  render();
+  updateCheckoutHint();
+});
+
+document.getElementById('checkInDate').addEventListener('change', updateCheckoutHint);
+
 async function loadHistory() {
   const h = await (await fetch('/api/history')).json();
   const body = document.getElementById('historyBody');
@@ -196,10 +230,13 @@ async function loadHistory() {
 }
 
 document.getElementById('saveBtn').onclick = async () => {
+  const checkInDate = document.getElementById('checkInDate').value;
+  const startDate = checkInDate;
+  const endDate = computeCheckout(checkInDate, selectedNights);
   const body = {
     email: document.getElementById('email').value.trim(),
-    startDate: document.getElementById('startDate').value,
-    endDate: document.getElementById('endDate').value,
+    startDate,
+    endDate,
     facilities: Array.from(selectedFacilities),
     roomTypes: roomTypeIsAll ? ALL : Array.from(selectedRoomTypes),
     active: document.getElementById('activeToggle').checked,
@@ -207,7 +244,7 @@ document.getElementById('saveBtn').onclick = async () => {
   };
   const res = await fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
   const msg = document.getElementById('saveMsg');
-  if (res.ok) { msg.textContent = '저장됨 ✓'; setTimeout(()=>msg.textContent='',2000); }
+  if (res.ok) { msg.style.color = 'var(--ok)'; msg.textContent = '저장됨 ✓'; setTimeout(()=>msg.textContent='',2000); }
   else { const e = await res.json(); msg.style.color='var(--warn)'; msg.textContent = e.error || '오류'; }
 };
 
