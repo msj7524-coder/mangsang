@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>망상 빈자리 알림 v2</title>
+<style>
+  :root { --sea:#0e6ba8; --sand:#f4e9d8; --ok:#1f9d55; --warn:#d92626; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Pretendard','Apple SD Gothic Neo',sans-serif; background:var(--sand); color:#222; }
+  header { background:linear-gradient(135deg,var(--sea),#083a5c); color:#fff; padding:24px; }
+  header h1 { margin:0; font-size:22px; }
+  header p { margin:4px 0 0; opacity:.85; font-size:13px; }
+  main { max-width:820px; margin:24px auto; padding:0 16px 60px; }
+  .card { background:#fff; border-radius:14px; padding:20px; margin-bottom:18px; box-shadow:0 2px 10px rgba(0,0,0,.06); }
+  .card h2 { margin-top:0; font-size:16px; color:var(--sea); }
+  label { display:block; font-size:13px; margin:12px 0 6px; font-weight:600; }
+  input[type=date], input[type=email] { width:100%; padding:10px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:6px; }
+  .chip { border:1px solid #ccc; border-radius:999px; padding:7px 12px; font-size:13px; cursor:pointer; user-select:none; background:#fafafa; }
+  .chip.active { background:var(--sea); color:#fff; border-color:var(--sea); }
+  .row { display:flex; align-items:center; justify-content:space-between; margin-top:16px; }
+  .switch { display:flex; align-items:center; gap:8px; font-size:14px; }
+  button { border:none; border-radius:8px; padding:11px 18px; font-size:14px; cursor:pointer; font-weight:600; }
+  .btn-primary { background:var(--sea); color:#fff; }
+  .btn-ghost { background:#eee; color:#333; }
+  #saveMsg { font-size:13px; margin-left:10px; color:var(--ok); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid #eee; }
+  .status-ok { color:var(--warn); font-weight:700; }
+  .status-none { color:#999; }
+  small.hint { color:#888; display:block; margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏕️ 망상 빈자리 알림 v2</h1>
+  <p>원하는 날짜 · 숙소 유형(전체 포함)을 지정하면, 취소가 발생했을 때 이메일로 알려드려요.</p>
+</header>
+
+<main>
+  <div class="card">
+    <h2>감시 조건 설정</h2>
+    <div class="grid">
+      <div>
+        <label>시작일</label>
+        <input type="date" id="startDate" />
+      </div>
+      <div>
+        <label>종료일</label>
+        <input type="date" id="endDate" />
+      </div>
+    </div>
+
+    <label>알림 받는 방법</label>
+    <div class="chips" id="channelChips">
+      <div class="chip" data-channel="kakao">카카오톡 (나에게 보내기)</div>
+      <div class="chip" data-channel="email">이메일</div>
+    </div>
+    <div id="kakaoStatusBox" style="margin-top:10px; font-size:13px;"></div>
+
+    <label>알림 받을 이메일 <small class="hint">(이메일 채널 선택 시에만 필요)</small></label>
+    <input type="email" id="email" placeholder="you@example.com" />
+
+    <label>감시할 시설 <small class="hint">(클릭해서 선택/해제, 전체 선택 = 전체 포함)</small></label>
+    <div class="chips" id="facilityChips"></div>
+
+    <label>숙소 유형 <small class="hint">"전체 포함"을 누르면 유형 구분 없이 전부 감시합니다</small></label>
+    <div class="chips" id="roomTypeChips"></div>
+
+    <div class="row">
+      <div class="switch">
+        <input type="checkbox" id="activeToggle" />
+        <span>감시 활성화 (자동 주기 실행)</span>
+      </div>
+      <div>
+        <button class="btn-ghost" id="runNowBtn">지금 1회 확인</button>
+        <button class="btn-primary" id="saveBtn">저장</button>
+        <span id="saveMsg"></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>최근 이력</h2>
+    <table>
+      <thead><tr><th>시간</th><th>구분</th><th>상태</th><th>상세</th></tr></thead>
+      <tbody id="historyBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+const ALL = "ALL";
+let cfg = { facilities: [], roomTypes: [] };
+let selectedFacilities = new Set();
+let roomTypeIsAll = true;
+let selectedRoomTypes = new Set();
+let channels = { email: false, kakao: true };
+let kakaoConnected = false;
+
+async function loadConfig() {
+  cfg = await (await fetch('/api/config')).json();
+  const fWrap = document.getElementById('facilityChips');
+  fWrap.innerHTML = '';
+  cfg.facilities.forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'chip';
+    el.textContent = f.name;
+    el.dataset.code = f.code;
+    el.onclick = () => { toggleFacility(f.code); render(); };
+    fWrap.appendChild(el);
+  });
+
+  const rWrap = document.getElementById('roomTypeChips');
+  rWrap.innerHTML = '';
+  const allChip = document.createElement('div');
+  allChip.className = 'chip';
+  allChip.textContent = '전체 포함';
+  allChip.dataset.code = ALL;
+  allChip.onclick = () => { roomTypeIsAll = true; selectedRoomTypes.clear(); render(); };
+  rWrap.appendChild(allChip);
+
+  cfg.roomTypes.forEach(rt => {
+    const el = document.createElement('div');
+    el.className = 'chip';
+    el.textContent = rt.name;
+    el.dataset.code = rt.code;
+    el.onclick = () => { roomTypeIsAll = false; toggleSet(selectedRoomTypes, rt.code); render(); };
+    rWrap.appendChild(el);
+  });
+}
+
+function toggleFacility(code) { toggleSet(selectedFacilities, code); }
+function toggleSet(set, code) { set.has(code) ? set.delete(code) : set.add(code); }
+
+function render() {
+  document.querySelectorAll('#facilityChips .chip').forEach(el => {
+    el.classList.toggle('active', selectedFacilities.has(el.dataset.code));
+  });
+  document.querySelectorAll('#roomTypeChips .chip').forEach(el => {
+    if (el.dataset.code === ALL) el.classList.toggle('active', roomTypeIsAll);
+    else el.classList.toggle('active', !roomTypeIsAll && selectedRoomTypes.has(el.dataset.code));
+  });
+  document.querySelectorAll('#channelChips .chip').forEach(el => {
+    el.classList.toggle('active', !!channels[el.dataset.channel]);
+  });
+}
+
+async function loadSettings() {
+  const s = await (await fetch('/api/settings')).json();
+  document.getElementById('startDate').value = s.startDate || '';
+  document.getElementById('endDate').value = s.endDate || '';
+  document.getElementById('email').value = s.email || '';
+  document.getElementById('activeToggle').checked = !!s.active;
+  channels = s.channels || { email: false, kakao: true };
+  selectedFacilities = new Set(s.facilities && s.facilities.length ? s.facilities : cfg.facilities.map(f => f.code));
+  if (s.roomTypes === ALL || !s.roomTypes) {
+    roomTypeIsAll = true; selectedRoomTypes = new Set();
+  } else {
+    roomTypeIsAll = false; selectedRoomTypes = new Set(s.roomTypes);
+  }
+  render();
+}
+
+async function loadKakaoStatus() {
+  const s = await (await fetch('/api/kakao/status')).json();
+  kakaoConnected = s.connected;
+  const box = document.getElementById('kakaoStatusBox');
+  if (kakaoConnected) {
+    box.innerHTML = '✅ 카카오톡 연동됨';
+  } else {
+    box.innerHTML = '⚠️ 카카오톡 미연동 · <a href="/auth/kakao">지금 연동하기</a>';
+  }
+}
+
+document.getElementById('channelChips').addEventListener('click', (e) => {
+  const chip = e.target.closest('.chip');
+  if (!chip) return;
+  const ch = chip.dataset.channel;
+  channels[ch] = !channels[ch];
+  render();
+});
+
+async function loadHistory() {
+  const h = await (await fetch('/api/history')).json();
+  const body = document.getElementById('historyBody');
+  if (!h.length) { body.innerHTML = '<tr><td colspan="4">아직 이력이 없습니다.</td></tr>'; return; }
+  body.innerHTML = h.map(entry => {
+    const t = new Date(entry.time).toLocaleString('ko-KR');
+    const isHit = entry.status === '취소 발생';
+    const detail = (entry.items || []).map(i => `${i.facilityName} ${i.roomTypeName} ${i.date}`).join(', ') || '-';
+    return `<tr><td>${t}</td><td>${entry.type}</td><td class="${isHit ? 'status-ok' : 'status-none'}">${entry.status}</td><td>${detail}</td></tr>`;
+  }).join('');
+}
+
+document.getElementById('saveBtn').onclick = async () => {
+  const body = {
+    email: document.getElementById('email').value.trim(),
+    startDate: document.getElementById('startDate').value,
+    endDate: document.getElementById('endDate').value,
+    facilities: Array.from(selectedFacilities),
+    roomTypes: roomTypeIsAll ? ALL : Array.from(selectedRoomTypes),
+    active: document.getElementById('activeToggle').checked,
+    channels,
+  };
+  const res = await fetch('/api/settings', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const msg = document.getElementById('saveMsg');
+  if (res.ok) { msg.textContent = '저장됨 ✓'; setTimeout(()=>msg.textContent='',2000); }
+  else { const e = await res.json(); msg.style.color='var(--warn)'; msg.textContent = e.error || '오류'; }
+};
+
+document.getElementById('runNowBtn').onclick = async () => {
+  const btn = document.getElementById('runNowBtn');
+  btn.disabled = true; btn.textContent = '확인 중...';
+  try {
+    const r = await (await fetch('/api/run-now', { method: 'POST' })).json();
+    await loadHistory();
+    alert(r.skipped ? (r.reason || '건너뜀') : `확인 완료 (신규 취소 ${r.found}건)`);
+  } finally {
+    btn.disabled = false; btn.textContent = '지금 1회 확인';
+  }
+};
+
+(async () => {
+  await loadConfig();
+  await loadSettings();
+  await loadKakaoStatus();
+  await loadHistory();
+  setInterval(loadHistory, 30000);
+})();
+</script>
+</body>
+</html>
