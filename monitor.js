@@ -85,8 +85,8 @@ function toYearMonth(dateStr) {
 // 1단계: 달력 한 화면에서 날짜별 예약가능(✅)/마감(❌) 상태를 읽어옴
 async function scrapeCalendarMonth(page, facilityCode, yearMonth) {
   const url = `${RESERVATION_URL}?facility=${facilityCode}&ym=${yearMonth}`;
-  await page.goto(url, { waitUntil: "networkidle", timeout: 30000 });
-
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+  
   const cells = await page.$$eval(CALENDAR_ICON_SELECTOR, (nodes, hints) => {
     const availRe = new RegExp(hints.avail, "i");
     const fullRe = new RegExp(hints.full, "i");
