@@ -11,7 +11,11 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/api/config", (req, res) => {
-  res.json({ facilities: FACILITIES, roomTypes: ROOM_TYPES, allCode: ALL_ROOM_TYPES_CODE });
+  res.json({ 
+    facilities: FACILITIES || [], 
+    roomTypes: ROOM_TYPES || [], 
+    allCode: ALL_ROOM_TYPES_CODE || "ALL" 
+  });
 });
 
 app.get("/api/settings", (req, res) => {
