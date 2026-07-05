@@ -36,23 +36,24 @@
 <body>
 <header>
   <h1>🏕️ 망상 빈자리 알림 v2</h1>
-  <p>체크인 날짜 · 숙박기간 · 숙소 유형(전체 포함)을 지정하면, 취소가 발생했을 때 알려드려요.</p>
+  <p>검색 기간 · 시설 · 숙소 유형(전체 포함)을 지정하면, 취소가 발생했을 때 알려드리고 현재 예약가능 현황도 보여드려요.</p>
 </header>
 
 <main>
   <div class="card">
     <h2>감시 조건 설정</h2>
 
-    <label>체크인 날짜</label>
-    <input type="date" id="checkInDate" />
-
-    <label>숙박기간</label>
-    <div class="chips" id="nightsChips">
-      <div class="chip" data-nights="1">1박 2일</div>
-      <div class="chip" data-nights="2">2박 3일</div>
-      <div class="chip" data-nights="3">3박 4일</div>
+    <label>검색 기간</label>
+    <div class="grid">
+      <div>
+        <label style="margin-top:0">시작일</label>
+        <input type="date" id="startDate" />
+      </div>
+      <div>
+        <label style="margin-top:0">종료일</label>
+        <input type="date" id="endDate" />
+      </div>
     </div>
-    <small class="hint" id="checkOutHint"></small>
 
     <label>알림 받는 방법</label>
     <div class="chips" id="channelChips">
@@ -84,10 +85,20 @@
   </div>
 
   <div class="card">
-    <h2>최근 이력</h2>
+    <h2>실시간 감시</h2>
+    <small class="hint">마감 → 예약가능으로 바뀐 순간(취소 발생)을 감지한 이력입니다.</small>
     <table>
       <thead><tr><th>시간</th><th>구분</th><th>상태</th><th>상세</th></tr></thead>
       <tbody id="historyBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>현재 예약가능</h2>
+    <small class="hint">검색 기간 안에서 지금 바로 예약 가능한 시설·숙소유형·숙박기간입니다. 감시 주기마다 갱신됩니다.</small>
+    <table>
+      <thead><tr><th>시설</th><th>숙소유형</th><th>체크인</th><th>예약 가능 숙박기간</th></tr></thead>
+      <tbody id="boardBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody>
     </table>
   </div>
 </main>
@@ -100,20 +111,6 @@ let roomTypeIsAll = true;
 let selectedRoomTypes = new Set();
 let channels = { email: false, kakao: true };
 let kakaoConnected = false;
-let selectedNights = 1;
-
-function computeCheckout(checkIn, nights) {
-  if (!checkIn) return '';
-  const d = new Date(checkIn);
-  d.setDate(d.getDate() + nights);
-  return d.toISOString().slice(0, 10);
-}
-
-function updateCheckoutHint() {
-  const checkIn = document.getElementById('checkInDate').value;
-  const checkout = computeCheckout(checkIn, selectedNights);
-  document.getElementById('checkOutHint').textContent = checkout ? `체크아웃: ${checkout}` : '';
-}
 
 async function loadConfig() {
   cfg = await (await fetch('/api/config')).json();
@@ -161,20 +158,12 @@ function render() {
   document.querySelectorAll('#channelChips .chip').forEach(el => {
     el.classList.toggle('active', !!channels[el.dataset.channel]);
   });
-  document.querySelectorAll('#nightsChips .chip').forEach(el => {
-    el.classList.toggle('active', Number(el.dataset.nights) === selectedNights);
-  });
 }
 
 async function loadSettings() {
   const s = await (await fetch('/api/settings')).json();
-  document.getElementById('checkInDate').value = s.startDate || '';
-  if (s.startDate && s.endDate) {
-    const diffDays = Math.round((new Date(s.endDate) - new Date(s.startDate)) / (1000 * 60 * 60 * 24));
-    selectedNights = [1, 2, 3].includes(diffDays) ? diffDays : 1;
-  } else {
-    selectedNights = 1;
-  }
+  document.getElementById('startDate').value = s.startDate || '';
+  document.getElementById('endDate').value = s.endDate || '';
   document.getElementById('email').value = s.email || '';
   document.getElementById('activeToggle').checked = !!s.active;
   channels = s.channels || { email: false, kakao: true };
@@ -185,7 +174,6 @@ async function loadSettings() {
     roomTypeIsAll = false; selectedRoomTypes = new Set(s.roomTypes);
   }
   render();
-  updateCheckoutHint();
 }
 
 async function loadKakaoStatus() {
@@ -207,16 +195,6 @@ document.getElementById('channelChips').addEventListener('click', (e) => {
   render();
 });
 
-document.getElementById('nightsChips').addEventListener('click', (e) => {
-  const chip = e.target.closest('.chip');
-  if (!chip) return;
-  selectedNights = Number(chip.dataset.nights);
-  render();
-  updateCheckoutHint();
-});
-
-document.getElementById('checkInDate').addEventListener('change', updateCheckoutHint);
-
 async function loadHistory() {
   const h = await (await fetch('/api/history')).json();
   const body = document.getElementById('historyBody');
@@ -229,14 +207,22 @@ async function loadHistory() {
   }).join('');
 }
 
+async function loadBoard() {
+  const b = await (await fetch('/api/board')).json();
+  const body = document.getElementById('boardBody');
+  if (!b.length) { body.innerHTML = '<tr><td colspan="4">현재 예약 가능한 항목이 없습니다.</td></tr>'; return; }
+  const nightsLabel = { 1: '1박2일', 2: '2박3일', 3: '3박4일' };
+  body.innerHTML = b.map(item => {
+    const nights = item.nights.map(n => nightsLabel[n]).join(', ');
+    return `<tr><td>${item.facilityName}</td><td>${item.roomTypeName}</td><td>${item.checkIn}</td><td class="status-ok">${nights}</td></tr>`;
+  }).join('');
+}
+
 document.getElementById('saveBtn').onclick = async () => {
-  const checkInDate = document.getElementById('checkInDate').value;
-  const startDate = checkInDate;
-  const endDate = computeCheckout(checkInDate, selectedNights);
   const body = {
     email: document.getElementById('email').value.trim(),
-    startDate,
-    endDate,
+    startDate: document.getElementById('startDate').value,
+    endDate: document.getElementById('endDate').value,
     facilities: Array.from(selectedFacilities),
     roomTypes: roomTypeIsAll ? ALL : Array.from(selectedRoomTypes),
     active: document.getElementById('activeToggle').checked,
@@ -254,6 +240,7 @@ document.getElementById('runNowBtn').onclick = async () => {
   try {
     const r = await (await fetch('/api/run-now', { method: 'POST' })).json();
     await loadHistory();
+    await loadBoard();
     alert(r.skipped ? (r.reason || '건너뜀') : `확인 완료 (신규 취소 ${r.found}건)`);
   } finally {
     btn.disabled = false; btn.textContent = '지금 1회 확인';
@@ -265,7 +252,9 @@ document.getElementById('runNowBtn').onclick = async () => {
   await loadSettings();
   await loadKakaoStatus();
   await loadHistory();
+  await loadBoard();
   setInterval(loadHistory, 30000);
+  setInterval(loadBoard, 30000);
 })();
 </script>
 </body>
