@@ -3,7 +3,7 @@ const express = require("express");
 const cron = require("node-cron");
 const path = require("path");
 const { FACILITIES, ROOM_TYPES, ALL_ROOM_TYPES_CODE } = require("./config");
-const { runCheckOnce, getSettings, saveSettings, getHistory } = require("./monitor");
+const { runCheckOnce, getSettings, saveSettings, getHistory, getBoard } = require("./monitor");
 const kakao = require("./kakao");
 
 const app = express();
@@ -35,7 +35,7 @@ app.post("/api/settings", (req, res) => {
     startDate,
     endDate,
     facilities: Array.isArray(facilities) && facilities.length ? facilities : FACILITIES.map((f) => f.code),
-    roomTypes: roomTypes || ALL_ROOM_TYPES_CODE, // "전체 포함" 기본값
+    roomTypes: roomTypes || ALL_ROOM_TYPES_CODE,
     active: !!active,
     channels: ch,
   });
@@ -64,6 +64,10 @@ app.get("/api/history", (req, res) => {
   res.json(getHistory());
 });
 
+app.get("/api/board", (req, res) => {
+  res.json(getBoard());
+});
+
 // 수동으로 즉시 1회 감시 실행 (테스트용)
 app.post("/api/run-now", async (req, res) => {
   try {
@@ -77,11 +81,8 @@ app.post("/api/run-now", async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`망상 빈자리 알림 v2 서버 실행 중: http://localhost:${PORT}`));
 
-// ---- 스케줄러: 기본 5분마다 자동 감시 ----
-// Render 무료 웹 서비스는 미사용 시 슬립될 수 있으니,
-// 반드시 감시가 계속 돌아야 한다면 Render의 "Cron Job" 또는
-// 유료 "Background Worker" 플랜을 권장합니다. (README 참고)
-const INTERVAL_MIN = Number(process.env.CHECK_INTERVAL_MIN || 5);
+// ---- 스케줄러: 기본 30초마다 자동 감시 ----
+const INTERVAL_MIN = Number(process.env.CHECK_INTERVAL_MIN || 0.5);
 cron.schedule(`*/${INTERVAL_MIN} * * * *`, async () => {
   console.log(`[cron] 감시 실행 (${new Date().toLocaleString("ko-KR")})`);
   try {
