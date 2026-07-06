@@ -3,7 +3,7 @@ const express = require("express");
 const cron = require("node-cron");
 const path = require("path");
 const { FACILITIES } = require("./config");
-const { runCheckOnce, getSettings, saveSettings, getHistory, getBoard } = require("./monitor");
+const { runCheckOnce, getSettings, saveSettings, getHistory, getBoard, getStatus } = require("./monitor");
 const kakao = require("./kakao");
 
 const app = express();
@@ -65,6 +65,10 @@ app.get("/api/history", (req, res) => {
 
 app.get("/api/board", (req, res) => {
   res.json(getBoard());
+});
+
+app.get("/api/status", (req, res) => {
+  res.json({ settings: getSettings(), status: getStatus() });
 });
 
 // 수동으로 즉시 1회 감시 실행 (테스트용)
