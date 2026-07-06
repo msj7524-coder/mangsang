@@ -29,7 +29,7 @@ function pushEvents(newEvents) {
   if (!newEvents || !newEvents.length) return;
   const events = getEvents();
   events.push(...newEvents);
-  writeJson(EVENTS_FILE, events.slice(-500)); // 최근 500개만 보관
+  writeJson(EVENTS_FILE, events.slice(-500));
 }
 
 module.exports = { getHeartbeat, saveHeartbeat, getEvents, pushEvents };
