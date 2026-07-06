@@ -8,6 +8,7 @@ const STATE_FILE = path.join(__dirname, "data", "state.json");
 const SETTINGS_FILE = path.join(__dirname, "data", "settings.json");
 const HISTORY_FILE = path.join(__dirname, "data", "history.json");
 const BOARD_FILE = path.join(__dirname, "data", "board.json");
+const STATUS_FILE = path.join(__dirname, "data", "status.json");
 
 const RESERVATION_URL =
   process.env.RESERVATION_URL ||
@@ -52,6 +53,12 @@ function getBoard() {
 }
 function saveBoard(items) {
   writeJson(BOARD_FILE, { updatedAt: new Date().toISOString(), items });
+}
+function getStatus() {
+  return readJson(STATUS_FILE, { lastRunAt: null, ok: null, message: "" });
+}
+function saveStatus(ok, message) {
+  writeJson(STATUS_FILE, { lastRunAt: new Date().toISOString(), ok, message: message || "" });
 }
 
 function dateRange(start, end) {
@@ -151,7 +158,7 @@ async function runCheckOnce() {
   const yearMonths = [...new Set(dates.map(toYearMonth))].sort();
   const facilities = FACILITIES.filter((f) => settings.facilities.includes(f.code));
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, channel: "chromium" });
   const page = await browser.newPage();
 
   try {
@@ -184,10 +191,12 @@ async function runCheckOnce() {
       }
     }
   } catch (e) {
-    await browser.close();
-    throw e;
+    await browser.close().catch(() => {});
+    saveStatus(false, e.message);
+    return { skipped: false, error: e.message, found: 0 };
   }
   await browser.close();
+  saveStatus(true, "");
 
   writeJson(STATE_FILE, nextState);
   currentlyAvailable.sort((a, b) => a.date.localeCompare(b.date) || a.facilityName.localeCompare(b.facilityName));
@@ -222,4 +231,5 @@ module.exports = {
   saveSettings,
   getHistory,
   getBoard,
+  getStatus,
 };
