@@ -31,11 +31,15 @@
   .status-ok { color:var(--warn); font-weight:700; }
   .status-none { color:#999; }
   small.hint { color:#888; display:block; margin-top:6px; }
+  .status-badge { display:inline-block; font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; margin-left:10px; vertical-align:middle; }
+  .status-on { background:#1f9d55; color:#fff; }
+  .status-off { background:rgba(255,255,255,.2); color:#fff; }
+  .status-error { background:var(--warn); color:#fff; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🏕️ 망상 빈자리 알림</h1>
+  <h1>🏕️ 망상 빈자리 알림 <span id="statusBadge" class="status-badge status-off">확인 중...</span></h1>
   <p>검색 기간과 시설을 지정하면, 예약마감이던 날짜가 예약가능으로 바뀌었을 때(취소 발생) 알려드려요.</p>
 </header>
 
@@ -181,6 +185,35 @@ async function loadBoard() {
   body.innerHTML = items.map(item => `<tr><td>${item.date}</td><td>${item.facilityName}</td></tr>`).join('');
 }
 
+async function loadStatus() {
+  const badge = document.getElementById('statusBadge');
+  try {
+    const s = await (await fetch('/api/status')).json();
+    const active = !!s.settings?.active;
+    const st = s.status || {};
+    if (!active) {
+      badge.className = 'status-badge status-off';
+      badge.textContent = '감시 꺼짐';
+      return;
+    }
+    if (st.ok === false) {
+      badge.className = 'status-badge status-error';
+      badge.textContent = '오류 발생';
+      return;
+    }
+    if (st.ok === true) {
+      badge.className = 'status-badge status-on';
+      badge.textContent = '감시중';
+      return;
+    }
+    badge.className = 'status-badge status-off';
+    badge.textContent = '대기 중';
+  } catch {
+    badge.className = 'status-badge status-off';
+    badge.textContent = '상태 확인 불가';
+  }
+}
+
 document.getElementById('saveBtn').onclick = async () => {
   const body = {
     email: document.getElementById('email').value.trim(),
@@ -194,6 +227,7 @@ document.getElementById('saveBtn').onclick = async () => {
   const msg = document.getElementById('saveMsg');
   if (res.ok) { msg.style.color = 'var(--ok)'; msg.textContent = '저장됨 ✓'; setTimeout(()=>msg.textContent='',2000); }
   else { const e = await res.json(); msg.style.color='var(--warn)'; msg.textContent = e.error || '오류'; }
+  await loadStatus();
 };
 
 document.getElementById('runNowBtn').onclick = async () => {
@@ -202,12 +236,13 @@ document.getElementById('runNowBtn').onclick = async () => {
   try {
     const res = await fetch('/api/run-now', { method: 'POST' });
     const r = await res.json();
-    if (!res.ok) {
+    if (!res.ok || r.error) {
       alert('서버 오류: ' + (r.error || res.status));
       return;
     }
     await loadHistory();
     await loadBoard();
+    await loadStatus();
     alert(r.skipped ? (r.reason || '건너뜀') : `확인 완료 (신규 취소 ${r.found}건)`);
   } catch (e) {
     alert('요청 실패: ' + e.message);
@@ -222,8 +257,10 @@ document.getElementById('runNowBtn').onclick = async () => {
   await loadKakaoStatus();
   await loadHistory();
   await loadBoard();
+  await loadStatus();
   setInterval(loadHistory, 30000);
   setInterval(loadBoard, 30000);
+  setInterval(loadStatus, 30000);
 })();
 </script>
 </body>
