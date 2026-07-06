@@ -200,12 +200,17 @@ document.getElementById('runNowBtn').onclick = async () => {
   const btn = document.getElementById('runNowBtn');
   btn.disabled = true; btn.textContent = '확인 중...';
   try {
-    const r = await (await fetch('/api/run-now', { method: 'POST' })).json();
+    const res = await fetch('/api/run-now', { method: 'POST' });
+    const r = await res.json();
+    if (!res.ok) {
+      alert('서버 오류: ' + (r.error || res.status));
+      return;
+    }
     await loadHistory();
     await loadBoard();
     alert(r.skipped ? (r.reason || '건너뜀') : `확인 완료 (신규 취소 ${r.found}건)`);
   } catch (e) {
-    alert('오류: ' + e.message);
+    alert('요청 실패: ' + e.message);
   } finally {
     btn.disabled = false; btn.textContent = '지금 1회 확인';
   }
