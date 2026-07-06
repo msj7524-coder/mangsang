@@ -87,6 +87,16 @@
   </div>
 
   <div class="card">
+    <h2>실시간 시설별 현황 (PC 워처)</h2>
+    <small class="hint">PC에서 watcher.js를 실행 중일 때만 채워집니다. 캡차를 통과한 세션으로 든바다/난바다 등 세부 시설까지 확인합니다.</small>
+    <div id="watcherStatus" style="margin:8px 0; font-size:13px;" class="muted">아직 신호 없음</div>
+    <table>
+      <thead><tr><th>날짜</th><th>시설</th><th>객실</th><th>상태</th></tr></thead>
+      <tbody id="watcherBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
     <h2>현재 예약가능</h2>
     <small class="hint">검색 기간 안에서 지금 "예약가능" 상태인 시설·날짜입니다. 호실 단위 상세는 표시되지 않습니다. 감시 주기마다 갱신됩니다.</small>
     <table>
@@ -185,6 +195,30 @@ async function loadBoard() {
   body.innerHTML = items.map(item => `<tr><td>${item.date}</td><td>${item.facilityName}</td></tr>`).join('');
 }
 
+async function loadWatcherState() {
+  try {
+    const data = await (await fetch('/api/state')).json();
+    const hb = data.heartbeat;
+    const box = document.getElementById('watcherStatus');
+    if (!hb) { box.textContent = '아직 신호 없음 (PC 워처를 실행해 주세요)'; }
+    else {
+      const age = (Date.now() - new Date(hb.received_at).getTime()) / 60000;
+      let label = `마지막 확인: ${new Date(hb.received_at).toLocaleString('ko-KR')} (${Math.round(age)}분 전)`;
+      if (hb.status === 'login_required') label += ' · ⚠️ 캡차 재입력 필요';
+      if (hb.message) label += ` · ${hb.message}`;
+      box.textContent = label;
+    }
+    const body = document.getElementById('watcherBody');
+    const avail = (hb?.available_items || []).map(i => ({...i, kind: '예약가능'}));
+    const cancel = (hb?.canceling_items || []).map(i => ({...i, kind: '취소진행중'}));
+    const rows = [...cancel, ...avail];
+    if (!rows.length) { body.innerHTML = '<tr><td colspan="4">현재 표시할 항목이 없습니다.</td></tr>'; return; }
+    body.innerHTML = rows.map(i => `<tr><td>${i.target_date}</td><td>${i.facility}</td><td>${i.room}</td><td class="${i.kind === '취소진행중' ? 'status-ok' : ''}">${i.kind}</td></tr>`).join('');
+  } catch {
+    document.getElementById('watcherStatus').textContent = '상태를 불러올 수 없습니다.';
+  }
+}
+
 async function loadStatus() {
   const badge = document.getElementById('statusBadge');
   try {
@@ -258,9 +292,11 @@ document.getElementById('runNowBtn').onclick = async () => {
   await loadHistory();
   await loadBoard();
   await loadStatus();
+  await loadWatcherState();
   setInterval(loadHistory, 30000);
   setInterval(loadBoard, 30000);
   setInterval(loadStatus, 30000);
+  setInterval(loadWatcherState, 15000);
 })();
 </script>
 </body>
