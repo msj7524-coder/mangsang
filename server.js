@@ -4,6 +4,7 @@ const cron = require("node-cron");
 const path = require("path");
 const { FACILITIES } = require("./config");
 const { runCheckOnce, getSettings, saveSettings, getHistory, getBoard, getStatus } = require("./monitor");
+const { getHeartbeat, saveHeartbeat, getEvents, pushEvents } = require("./heartbeat");
 const kakao = require("./kakao");
 
 const app = express();
@@ -69,6 +70,40 @@ app.get("/api/board", (req, res) => {
 
 app.get("/api/status", (req, res) => {
   res.json({ settings: getSettings(), status: getStatus() });
+});
+
+// ---- PC 워처(watcher.js)가 보내는 시설별 실시간 현황 수신 ----
+app.post("/api/heartbeat", (req, res) => {
+  const token = req.headers["x-heartbeat-token"];
+  if (process.env.HEARTBEAT_TOKEN && token !== process.env.HEARTBEAT_TOKEN) {
+    return res.status(401).json({ error: "unauthorized" });
+  }
+  const body = req.body || {};
+  const availableItems = Array.isArray(body.available_items) ? body.available_items : [];
+  const cancelingItems = Array.isArray(body.canceling_items) ? body.canceling_items : [];
+
+  saveHeartbeat({
+    client: body.client || "",
+    status: body.status || "ok",
+    received_at: new Date().toISOString(),
+    target_dates: body.target_dates || [],
+    facilities: body.facilities || [],
+    available_items: availableItems,
+    canceling_items: cancelingItems,
+    available_count: availableItems.length,
+    canceling_count: cancelingItems.length,
+    message: body.message || "",
+  });
+
+  if (Array.isArray(body.events) && body.events.length) {
+    pushEvents(body.events.map((e) => ({ ...e, received_at: new Date().toISOString() })));
+  }
+
+  res.json({ ok: true });
+});
+
+app.get("/api/state", (req, res) => {
+  res.json({ heartbeat: getHeartbeat(), events: getEvents() });
 });
 
 // 수동으로 즉시 1회 감시 실행 (테스트용)
