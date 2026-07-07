@@ -90,7 +90,9 @@
     <h2>실시간 시설별 현황 (PC 워처)</h2>
     <small class="hint">PC에서 watcher.js를 실행 중일 때만 채워집니다. 캡차를 통과한 세션으로 든바다/난바다 등 세부 시설까지 확인합니다.</small>
     <div id="watcherStatus" style="margin:8px 0; font-size:13px;" class="muted">아직 신호 없음</div>
-    <table>
+    <label style="margin-top:10px">숙소 유형 필터 <small class="hint">(클릭해서 선택/해제)</small></label>
+    <div class="chips" id="watcherFacilityChips"></div>
+    <table style="margin-top:12px">
       <thead><tr><th>날짜</th><th>시설</th><th>객실</th><th>상태</th></tr></thead>
       <tbody id="watcherBody"><tr><td colspan="4">불러오는 중...</td></tr></tbody>
     </table>
@@ -195,6 +197,35 @@ async function loadBoard() {
   body.innerHTML = items.map(item => `<tr><td>${item.date}</td><td>${item.facilityName}</td></tr>`).join('');
 }
 
+const WATCHER_FACILITIES = ["전통한옥", "캐빈하우스", "든바다", "난바다", "허허바다", "자동차캠핑장", "캐라반", "글램핑(4인)", "글램핑(2인)"];
+let selectedWatcherFacilities = new Set(WATCHER_FACILITIES);
+
+function initWatcherChips() {
+  const wrap = document.getElementById('watcherFacilityChips');
+  wrap.innerHTML = '';
+  WATCHER_FACILITIES.forEach(name => {
+    const el = document.createElement('div');
+    el.className = 'chip active';
+    el.textContent = name;
+    el.dataset.name = name;
+    el.onclick = () => {
+      selectedWatcherFacilities.has(name) ? selectedWatcherFacilities.delete(name) : selectedWatcherFacilities.add(name);
+      el.classList.toggle('active', selectedWatcherFacilities.has(name));
+      renderWatcherTable(lastWatcherRows);
+    };
+    wrap.appendChild(el);
+  });
+}
+
+let lastWatcherRows = [];
+function renderWatcherTable(rows) {
+  lastWatcherRows = rows;
+  const body = document.getElementById('watcherBody');
+  const filtered = rows.filter(i => selectedWatcherFacilities.has(i.facility));
+  if (!filtered.length) { body.innerHTML = '<tr><td colspan="4">현재 표시할 항목이 없습니다.</td></tr>'; return; }
+  body.innerHTML = filtered.map(i => `<tr><td>${i.target_date}</td><td>${i.facility}</td><td>${i.room}</td><td class="${i.kind === '취소진행중' ? 'status-ok' : ''}">${i.kind}</td></tr>`).join('');
+}
+
 async function loadWatcherState() {
   try {
     const data = await (await fetch('/api/state')).json();
@@ -208,12 +239,9 @@ async function loadWatcherState() {
       if (hb.message) label += ` · ${hb.message}`;
       box.textContent = label;
     }
-    const body = document.getElementById('watcherBody');
     const avail = (hb?.available_items || []).map(i => ({...i, kind: '예약가능'}));
     const cancel = (hb?.canceling_items || []).map(i => ({...i, kind: '취소진행중'}));
-    const rows = [...cancel, ...avail];
-    if (!rows.length) { body.innerHTML = '<tr><td colspan="4">현재 표시할 항목이 없습니다.</td></tr>'; return; }
-    body.innerHTML = rows.map(i => `<tr><td>${i.target_date}</td><td>${i.facility}</td><td>${i.room}</td><td class="${i.kind === '취소진행중' ? 'status-ok' : ''}">${i.kind}</td></tr>`).join('');
+    renderWatcherTable([...cancel, ...avail]);
   } catch {
     document.getElementById('watcherStatus').textContent = '상태를 불러올 수 없습니다.';
   }
@@ -290,6 +318,7 @@ document.getElementById('runNowBtn').onclick = async () => {
   await loadSettings();
   await loadKakaoStatus();
   await loadHistory();
+  initWatcherChips();
   await loadBoard();
   await loadStatus();
   await loadWatcherState();
